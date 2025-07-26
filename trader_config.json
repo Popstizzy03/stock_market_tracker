@@ -1,0 +1,28 @@
+{
+  "initial_capital": 100000,
+  "watchlist": [
+    "AAPL",
+    "MSFT",
+    "GOOGL",
+    "TSLA",
+    "NVDA",
+    "META",
+    "AMZN"
+  ],
+  "trading_hours": {
+    "start": "09:30",
+    "end": "16:00"
+  },
+  "risk_per_trade": 0.02,
+  "max_positions": 5,
+  "strategies": [
+    "multi_signal",
+    "momentum"
+  ],
+  "alert_thresholds": {
+    "daily_loss_limit": 0.05,
+    "position_loss_limit": 0.03,
+    "profit_target": 0.08
+  },
+  "update_interval_minutes": 15
+}
