@@ -1,3 +1,4 @@
+
 import time
 import schedule
 import logging
@@ -5,13 +6,18 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import pandas as pd
 import yfinance as yf
-from stock_market import SmartStockTrader, TradingSignal
-from advanced_strategies import MultiSignalStrategy, MomentumStrategy, MeanReversionStrategy
 import json
 import os
+from rich.console import Console
+from rich.table import Table
+
+from src.core.trader import SmartStockTrader, TradingSignal
+from src.strategies.advanced_strategies import MultiSignalStrategy, MomentumStrategy, MeanReversionStrategy
+from src.strategies.ml_strategy import MLTradingStrategy
 
 class RealTimeTrader:
     def __init__(self, config_file: str = "trader_config.json"):
+        self.console = Console()
         self.config = self._load_config(config_file)
         self.trader = SmartStockTrader(self.config.get('initial_capital', 100000))
         self.active_strategies = self._initialize_strategies()
@@ -75,6 +81,8 @@ class RealTimeTrader:
                 strategies['momentum'] = MomentumStrategy()
             elif strategy_name == 'mean_reversion':
                 strategies['mean_reversion'] = MeanReversionStrategy()
+            elif strategy_name == 'ml_strategy':
+                strategies['ml_strategy'] = MLTradingStrategy()
         
         return strategies
     
@@ -107,9 +115,7 @@ class RealTimeTrader:
         return sum(t['pnl'] for t in daily_trades)
     
     def _send_alert(self, message: str):
-        self.logger.warning(f"ALERT: {message}")
-        # Here you could integrate with email, SMS, Slack, etc.
-        # For now, just log the alert
+        self.console.print(f"[bold red]ALERT: {message}[/bold red]")
     
     def _check_position_alerts(self):
         for symbol, position in self.trader.positions.items():
@@ -121,7 +127,7 @@ class RealTimeTrader:
                 self._send_alert(f"{symbol} position up {pnl_pct:.2%} - consider taking profit")
     
     def update_market_data(self):
-        self.logger.info("Updating market data and positions...")
+        self.console.print("[bold]Updating market data and positions...[/bold]")
         try:
             self.trader.update_positions(self.watchlist)
             self._check_position_alerts()
@@ -136,24 +142,24 @@ class RealTimeTrader:
             })
             
         except Exception as e:
-            self.logger.error(f"Error updating market data: {e}")
+            self.console.print(f"[bold red]Error updating market data: {e}[/bold red]")
     
     def scan_for_signals(self):
         if not self._is_market_hours():
-            self.logger.info("Market is closed. Skipping signal scan.")
+            self.console.print("[yellow]Market is closed. Skipping signal scan.[/yellow]")
             return
         
         if self._check_daily_loss_limit():
-            self.logger.warning("Daily loss limit reached. Stopping trading.")
+            self.console.print("[bold red]Daily loss limit reached. Stopping trading.[/bold red]")
             self.trading_active = False
             return
         
-        self.logger.info("Scanning for trading signals...")
+        self.console.print("[bold]Scanning for trading signals...[/bold]")
         
         for symbol in self.watchlist:
             try:
                 if len(self.trader.positions) >= self.config.get('max_positions', 5):
-                    self.logger.info("Maximum positions reached. Skipping new entries.")
+                    self.console.print("[yellow]Maximum positions reached. Skipping new entries.[/yellow]")
                     break
                 
                 for strategy_name, strategy in self.active_strategies.items():
@@ -165,81 +171,89 @@ class RealTimeTrader:
                             signal = custom_signal
                     
                     if signal.confidence > 0.7:
-                        self.logger.info(f"{symbol}: {signal.signal} signal (confidence: {signal.confidence:.2f}) - {signal.reason}")
+                        self.console.print(f"[green]{symbol}: {signal.signal} signal (confidence: {signal.confidence:.2f}) - {signal.reason}[/green]")
                         
                         if self.trading_active:
                             self.trader.execute_trade(symbol, signal, self.config.get('risk_per_trade', 0.02))
                         else:
-                            self.logger.info("Trading not active. Signal logged only.")
+                            self.console.print("[yellow]Trading not active. Signal logged only.[/yellow]")
             
             except Exception as e:
-                self.logger.error(f"Error analyzing {symbol}: {e}")
+                self.console.print(f"[bold red]Error analyzing {symbol}: {e}[/bold red]")
     
     def generate_daily_report(self):
         metrics = self.trader.get_performance_metrics()
         daily_pnl = self._calculate_daily_pnl()
-        
-        report = f"""
-=== Daily Trading Report - {datetime.now().strftime('%Y-%m-%d')} ===
-Portfolio Value: ${metrics['portfolio_value']:,.2f}
-Daily P&L: ${daily_pnl:,.2f}
-Total Return: {metrics['total_return_pct']:.2f}%
-Active Positions: {metrics['positions']}
-Total Trades Today: {len([t for t in self.trader.trade_history if t.get('timestamp', datetime.now()).date() == datetime.now().date()])}
-Win Rate: {metrics['win_rate_pct']:.2f}%
-Available Cash: ${metrics['current_capital']:,.2f}
 
-=== Current Positions ===
-"""
-        for symbol, position in self.trader.positions.items():
-            pnl_pct = (position.current_price - position.entry_price) / position.entry_price * 100
-            report += f"{symbol}: {position.shares} shares @ ${position.entry_price:.2f} (Current: ${position.current_price:.2f}, P&L: {pnl_pct:+.2f}%)\n"
+        table = Table(title=f"Daily Trading Report - {datetime.now().strftime('%Y-%m-%d')}")
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", justify="right", style="magenta")
+
+        table.add_row("Portfolio Value", f"${metrics['portfolio_value']:,.2f}")
+        table.add_row("Daily P&L", f"${daily_pnl:,.2f}")
+        table.add_row("Total Return", f"{metrics['total_return_pct']:.2f}%")
+        table.add_row("Active Positions", str(metrics['positions']))
+        table.add_row("Total Trades Today", str(len([t for t in self.trader.trade_history if t.get('timestamp', datetime.now()).date() == datetime.now().date()])))
+        table.add_row("Win Rate", f"{metrics['win_rate_pct']:.2f}%")
+        table.add_row("Available Cash", f"${metrics['current_capital']:,.2f}")
         
-        self.logger.info(report)
-        return report
+        self.console.print(table)
+
+        if self.trader.positions:
+            positions_table = Table(title="Current Positions")
+            positions_table.add_column("Symbol", style="cyan")
+            positions_table.add_column("Shares", justify="right", style="magenta")
+            positions_table.add_column("Entry Price", justify="right", style="magenta")
+            positions_table.add_column("Current Price", justify="right", style="magenta")
+            positions_table.add_column("P&L", justify="right", style="green")
+
+            for symbol, position in self.trader.positions.items():
+                pnl_pct = (position.current_price - position.entry_price) / position.entry_price * 100
+                positions_table.add_row(
+                    symbol,
+                    str(position.shares),
+                    f"${position.entry_price:.2f}",
+                    f"${position.current_price:.2f}",
+                    f"{pnl_pct:+.2f}%"
+                )
+            self.console.print(positions_table)
     
     def start_trading(self):
         self.trading_active = True
-        self.logger.info("Real-time trading started!")
+        self.console.print("[bold green]Real-time trading started![/bold green]")
         
-        # Schedule market data updates
         update_interval = self.config.get('update_interval_minutes', 15)
         schedule.every(update_interval).minutes.do(self.update_market_data)
-        
-        # Schedule signal scanning
         schedule.every(5).minutes.do(self.scan_for_signals)
-        
-        # Schedule daily report
         schedule.every().day.at("16:30").do(self.generate_daily_report)
         
-        self.logger.info(f"Scheduled updates every {update_interval} minutes")
-        self.logger.info("Scheduled signal scanning every 5 minutes during market hours")
-        self.logger.info("Scheduled daily report at 16:30")
+        self.console.print(f"Scheduled updates every {update_interval} minutes")
+        self.console.print("Scheduled signal scanning every 5 minutes during market hours")
+        self.console.print("Scheduled daily report at 16:30")
         
         try:
             while self.trading_active:
                 schedule.run_pending()
-                time.sleep(30)  # Check every 30 seconds
+                time.sleep(30)
         except KeyboardInterrupt:
-            self.logger.info("Trading stopped by user.")
+            self.console.print("[bold yellow]Trading stopped by user.[/bold yellow]")
         except Exception as e:
-            self.logger.error(f"Trading error: {e}")
+            self.console.print(f"[bold red]Trading error: {e}[/bold red]")
         finally:
             self.stop_trading()
     
     def stop_trading(self):
         self.trading_active = False
-        self.logger.info("Real-time trading stopped.")
-        final_report = self.generate_daily_report()
+        self.console.print("[bold yellow]Real-time trading stopped.[/bold yellow]")
+        self.generate_daily_report()
         
-        # Save performance log
         performance_df = pd.DataFrame(self.performance_log)
         if not performance_df.empty:
             performance_df.to_csv(f"performance_log_{datetime.now().strftime('%Y%m%d')}.csv", index=False)
-            self.logger.info("Performance log saved.")
+            self.console.print("[green]Performance log saved.[/green]")
     
     def run_simulation_mode(self, duration_hours: int = 1):
-        self.logger.info(f"Starting simulation mode for {duration_hours} hours...")
+        self.console.print(f"[bold]Starting simulation mode for {duration_hours} hours...[/bold]")
         self.trading_active = True
         
         end_time = datetime.now() + timedelta(hours=duration_hours)
@@ -248,11 +262,11 @@ Available Cash: ${metrics['current_capital']:,.2f}
             self.update_market_data()
             self.scan_for_signals()
             
-            self.logger.info(f"Simulation running... {(end_time - datetime.now()).seconds // 60} minutes remaining")
-            time.sleep(300)  # Wait 5 minutes between cycles
+            self.console.print(f"Simulation running... {(end_time - datetime.now()).seconds // 60} minutes remaining")
+            time.sleep(300)
         
         self.stop_trading()
-        self.logger.info("Simulation completed!")
+        self.console.print("[bold green]Simulation completed![/bold green]")
 
 def create_sample_config():
     config = {
@@ -273,14 +287,19 @@ def create_sample_config():
     with open("trader_config.json", "w") as f:
         json.dump(config, f, indent=2)
     
-    print("Sample configuration created: trader_config.json")
+    console = Console()
+    console.print("[bold green]Sample configuration created: trader_config.json[/bold green]")
 
 def main():
-    print("=== Real-Time Stock Trader ===")
-    print("1. Create sample configuration")
-    print("2. Run simulation mode (1 hour)")
-    print("3. Start real trading")
-    print("4. Exit")
+    console = Console()
+    console.print("[bold blue]=== Real-Time Stock Trader ===[/bold blue]")
+
+    table = Table(show_header=False)
+    table.add_row("1. Create sample configuration")
+    table.add_row("2. Run simulation mode (1 hour)")
+    table.add_row("3. Start real trading")
+    table.add_row("4. Exit")
+    console.print(table)
     
     choice = input("Select option (1-4): ").strip()
     
@@ -291,16 +310,16 @@ def main():
         trader.run_simulation_mode(1)
     elif choice == "3":
         trader = RealTimeTrader()
-        print("WARNING: This will start real trading. Make sure you have reviewed your configuration.")
+        console.print("[bold yellow]WARNING: This will start real trading. Make sure you have reviewed your configuration.[/bold yellow]")
         confirm = input("Are you sure you want to start real trading? (yes/no): ").strip().lower()
         if confirm == "yes":
             trader.start_trading()
         else:
-            print("Trading cancelled.")
+            console.print("[yellow]Trading cancelled.[/yellow]")
     elif choice == "4":
-        print("Goodbye!")
+        console.print("[bold]Goodbye![/bold]")
     else:
-        print("Invalid choice.")
+        console.print("[bold red]Invalid choice.[/bold red]")
 
 if __name__ == "__main__":
     main()

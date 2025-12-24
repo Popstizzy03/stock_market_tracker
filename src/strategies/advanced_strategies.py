@@ -1,8 +1,10 @@
+
 import pandas as pd
 import numpy as np
 from datetime import datetime
 from typing import Dict, List
-from stock_market import TradingStrategy, TradingSignal, TechnicalIndicators
+
+from src.core.trader import TradingStrategy, TradingSignal, TechnicalIndicators
 
 class MeanReversionStrategy(TradingStrategy):
     def __init__(self, lookback_period: int = 20, zscore_threshold: float = 2.0):
