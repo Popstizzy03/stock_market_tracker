@@ -1,12 +1,18 @@
+
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple
 import yfinance as yf
-from stock_market import SmartStockTrader, TradingSignal, Position
-from advanced_strategies import (MomentumStrategy, MeanReversionStrategy, 
+from rich.console import Console
+from rich.table import Table
+
+from src.core.trader import SmartStockTrader, TradingSignal, Position
+from src.strategies.advanced_strategies import (MomentumStrategy, MeanReversionStrategy,
                                BreakoutStrategy, MultiSignalStrategy, VolatilityStrategy)
+from src.strategies.ml_strategy import MLTradingStrategy
 
 class Backtester:
     def __init__(self, initial_capital: float = 100000, commission: float = 0.001):
@@ -152,19 +158,21 @@ class Backtester:
         return drawdown.min()
     
     def compare_strategies(self, symbols: List[str], start_date: str, end_date: str) -> pd.DataFrame:
+        console = Console()
         strategies = {
             'Momentum': MomentumStrategy(),
             'Mean Reversion': MeanReversionStrategy(),
             'Breakout': BreakoutStrategy(),
             'Multi-Signal': MultiSignalStrategy(),
-            'Volatility': VolatilityStrategy()
+            'Volatility': VolatilityStrategy(),
+            'ML Strategy': MLTradingStrategy()
         }
         
         results = []
         
         for symbol in symbols:
             for strategy_name, strategy in strategies.items():
-                print(f"Backtesting {strategy_name} on {symbol}...")
+                console.print(f"Backtesting [bold]{strategy_name}[/bold] on [bold]{symbol}[/bold]...")
                 result = self.backtest_strategy(strategy, symbol, start_date, end_date)
                 
                 if 'error' not in result:
@@ -186,80 +194,99 @@ class Backtester:
         if 'error' in result:
             print(f"Error: {result['error']}")
             return
-        
+
         portfolio_df = result['portfolio_values']
         trades = result['trades']
-        
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 10))
-        
-        ax1.plot(portfolio_df['date'], portfolio_df['value'], label='Portfolio Value', linewidth=2)
-        ax1.axhline(y=result['initial_capital'], color='gray', linestyle='--', alpha=0.7, label='Initial Capital')
-        
+
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                            vertical_spacing=0.05,
+                            subplot_titles=(f'{result["strategy"]} - {result["symbol"]} Backtest Results',
+                                            'Strategy vs Buy & Hold Comparison'))
+
+        # Portfolio Value
+        fig.add_trace(go.Scatter(x=portfolio_df['date'], y=portfolio_df['value'], name='Portfolio Value'), row=1, col=1)
+        fig.add_hline(y=result['initial_capital'], line_dash="dash", line_color="grey", row=1, col=1)
+
         if show_trades:
             buy_trades = [t for t in trades if t['action'] == 'BUY']
             sell_trades = [t for t in trades if t['action'] == 'SELL']
-            
+
             if buy_trades:
                 buy_dates = [t['date'] for t in buy_trades]
                 buy_values = [portfolio_df[portfolio_df['date'] <= date]['value'].iloc[-1] for date in buy_dates]
-                ax1.scatter(buy_dates, buy_values, color='green', marker='^', s=100, label='Buy Signal', zorder=5)
-            
+                fig.add_trace(go.Scatter(x=buy_dates, y=buy_values, mode='markers',
+                                         marker=dict(color='green', symbol='triangle-up', size=10),
+                                         name='Buy Signal'), row=1, col=1)
+
             if sell_trades:
                 sell_dates = [t['date'] for t in sell_trades]
                 sell_values = [portfolio_df[portfolio_df['date'] <= date]['value'].iloc[-1] for date in sell_dates]
-                ax1.scatter(sell_dates, sell_values, color='red', marker='v', s=100, label='Sell Signal', zorder=5)
-        
-        ax1.set_title(f'{result["strategy"]} - {result["symbol"]} Backtest Results')
-        ax1.set_ylabel('Portfolio Value ($)')
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
-        
+                fig.add_trace(go.Scatter(x=sell_dates, y=sell_values, mode='markers',
+                                         marker=dict(color='red', symbol='triangle-down', size=10),
+                                         name='Sell Signal'), row=1, col=1)
+
+        # Buy & Hold Comparison
         initial_price = portfolio_df['price'].iloc[0]
         normalized_prices = (portfolio_df['price'] / initial_price) * result['initial_capital']
-        ax2.plot(portfolio_df['date'], normalized_prices, label=f'{result["symbol"]} (Buy & Hold)', color='orange', alpha=0.7)
+        fig.add_trace(go.Scatter(x=portfolio_df['date'], y=normalized_prices, name=f'{result["symbol"]} (Buy & Hold)',
+                                 line_color='orange'), row=2, col=1)
+
+        fig.update_layout(height=800, title_text=f"Backtest Analysis for {result['symbol']}", showlegend=True)
+        fig.show()
         
-        ax2.set_title('Strategy vs Buy & Hold Comparison')
-        ax2.set_ylabel('Normalized Value ($)')
-        ax2.set_xlabel('Date')
-        ax2.legend()
-        ax2.grid(True, alpha=0.3)
+        console = Console()
+        table = Table(title="Backtest Summary")
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", justify="right", style="magenta")
+
+        table.add_row("Strategy", result['strategy'])
+        table.add_row("Symbol", result['symbol'])
+        table.add_row("Period", result['period'])
+        table.add_row("Initial Capital", f"${result['initial_capital']:,.2f}")
+        table.add_row("Final Value", f"${result['final_value']:,.2f}")
+        table.add_row("Total Return", f"{result['total_return_pct']:.2f}%")
+        table.add_row("Buy & Hold Return", f"{result['buy_hold_return_pct']:.2f}%")
+        table.add_row("Excess Return", f"{result['excess_return_pct']:.2f}%")
+        table.add_row("Total Trades", str(result['total_trades']))
+        table.add_row("Win Rate", f"{result['win_rate_pct']:.2f}%")
+        table.add_row("Sharpe Ratio", f"{result['sharpe_ratio']:.3f}")
+        table.add_row("Max Drawdown", f"{result['max_drawdown_pct']:.2f}%")
         
-        plt.tight_layout()
-        plt.show()
-        
-        print(f"\n=== Backtest Summary ===")
-        print(f"Strategy: {result['strategy']}")
-        print(f"Symbol: {result['symbol']}")
-        print(f"Period: {result['period']}")
-        print(f"Initial Capital: ${result['initial_capital']:,.2f}")
-        print(f"Final Value: ${result['final_value']:,.2f}")
-        print(f"Total Return: {result['total_return_pct']:.2f}%")
-        print(f"Buy & Hold Return: {result['buy_hold_return_pct']:.2f}%")
-        print(f"Excess Return: {result['excess_return_pct']:.2f}%")
-        print(f"Total Trades: {result['total_trades']}")
-        print(f"Win Rate: {result['win_rate_pct']:.2f}%")
-        print(f"Sharpe Ratio: {result['sharpe_ratio']:.3f}")
-        print(f"Max Drawdown: {result['max_drawdown_pct']:.2f}%")
+        console.print(table)
 
 def run_comprehensive_backtest():
+    console = Console()
     backtester = Backtester(initial_capital=100000)
     
     symbols = ['AAPL', 'MSFT', 'GOOGL', 'TSLA', 'NVDA']
     start_date = "2023-01-01"
     end_date = "2024-12-31"
     
-    print("Running comprehensive strategy comparison...")
+    console.print("[bold green]Running comprehensive strategy comparison...[/bold green]")
     comparison_df = backtester.compare_strategies(symbols, start_date, end_date)
     
-    print("\n=== Strategy Comparison Results ===")
-    print(comparison_df.to_string(index=False))
+    table = Table(title="Strategy Comparison Results")
+    for col in comparison_df.columns:
+        table.add_column(col, justify="right", style="cyan", no_wrap=True)
+
+    for index, row in comparison_df.iterrows():
+        table.add_row(*[f"{val:.2f}" if isinstance(val, float) else str(val) for val in row])
+
+    console.print(table)
     
     best_performers = comparison_df.groupby('Strategy')['Total Return (%)'].mean().sort_values(ascending=False)
-    print(f"\n=== Average Performance by Strategy ===")
+
+    avg_table = Table(title="Average Performance by Strategy")
+    avg_table.add_column("Strategy", style="magenta")
+    avg_table.add_column("Average Return (%)", justify="right", style="green")
+
     for strategy, return_pct in best_performers.items():
-        print(f"{strategy}: {return_pct:.2f}%")
+        avg_table.add_row(strategy, f"{return_pct:.2f}%")
+
+    console.print(avg_table)
+
+    console.print(f"\n[bold green]Running detailed backtest for best strategy on AAPL...[/bold green]")
     
-    print(f"\nRunning detailed backtest for best strategy on AAPL...")
     best_strategy_name = best_performers.index[0]
     
     strategies = {
@@ -267,7 +294,8 @@ def run_comprehensive_backtest():
         'Mean Reversion': MeanReversionStrategy(),
         'Breakout': BreakoutStrategy(),
         'Multi-Signal': MultiSignalStrategy(),
-        'Volatility': VolatilityStrategy()
+        'Volatility': VolatilityStrategy(),
+        'ML Strategy': MLTradingStrategy()
     }
     
     best_strategy = strategies[best_strategy_name]

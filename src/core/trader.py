@@ -1,7 +1,8 @@
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import warnings
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
@@ -307,34 +308,30 @@ class SmartStockTrader:
         if data.empty:
             print(f"No data available for {symbol}")
             return
-        
-        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(15, 12))
-        
-        ax1.plot(data.index, data['Close'], label='Close Price', linewidth=2)
-        ax1.plot(data.index, data['SMA_20'], label='SMA 20', alpha=0.7)
-        ax1.plot(data.index, data['SMA_50'], label='SMA 50', alpha=0.7)
-        ax1.fill_between(data.index, data['BB_Lower'], data['BB_Upper'], alpha=0.2, label='Bollinger Bands')
-        ax1.set_title(f'{symbol} Price Analysis')
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
-        
-        ax2.plot(data.index, data['RSI'], label='RSI', color='orange')
-        ax2.axhline(y=70, color='r', linestyle='--', alpha=0.7, label='Overbought')
-        ax2.axhline(y=30, color='g', linestyle='--', alpha=0.7, label='Oversold')
-        ax2.set_title('RSI Indicator')
-        ax2.set_ylabel('RSI')
-        ax2.legend()
-        ax2.grid(True, alpha=0.3)
-        
-        ax3.plot(data.index, data['MACD'], label='MACD', color='blue')
-        ax3.plot(data.index, data['MACD_Signal'], label='Signal', color='red')
-        ax3.bar(data.index, data['MACD_Histogram'], label='Histogram', alpha=0.6, color='gray')
-        ax3.set_title('MACD Indicator')
-        ax3.legend()
-        ax3.grid(True, alpha=0.3)
-        
-        plt.tight_layout()
-        plt.show()
+
+        fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
+                            vertical_spacing=0.05,
+                            subplot_titles=(f'{symbol} Price Analysis', 'RSI Indicator', 'MACD Indicator'))
+
+        # Price Analysis
+        fig.add_trace(go.Scatter(x=data.index, y=data['Close'], name='Close Price'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=data.index, y=data['SMA_20'], name='SMA 20', opacity=0.7), row=1, col=1)
+        fig.add_trace(go.Scatter(x=data.index, y=data['SMA_50'], name='SMA 50', opacity=0.7), row=1, col=1)
+        fig.add_trace(go.Scatter(x=data.index, y=data['BB_Lower'], fill=None, mode='lines', line_color='rgba(68, 68, 68, 0.2)'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=data.index, y=data['BB_Upper'], fill='tonexty', mode='lines', line_color='rgba(68, 68, 68, 0.2)'), row=1, col=1)
+
+        # RSI
+        fig.add_trace(go.Scatter(x=data.index, y=data['RSI'], name='RSI', line_color='orange'), row=2, col=1)
+        fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
+        fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
+
+        # MACD
+        fig.add_trace(go.Scatter(x=data.index, y=data['MACD'], name='MACD', line_color='blue'), row=3, col=1)
+        fig.add_trace(go.Scatter(x=data.index, y=data['MACD_Signal'], name='Signal', line_color='red'), row=3, col=1)
+        fig.add_trace(go.Bar(x=data.index, y=data['MACD_Histogram'], name='Histogram', marker_color='grey'), row=3, col=1)
+
+        fig.update_layout(height=800, title_text=f"Technical Analysis for {symbol}", showlegend=False)
+        fig.show()
 
 def main():
     trader = SmartStockTrader(initial_capital=100000)
